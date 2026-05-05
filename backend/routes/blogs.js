@@ -254,9 +254,12 @@ router.get('/:id', optionalAuth, async (req, res) => {
   }
 });
 
-router.patch('/:id/favorite', protect, async (req, res) => {
+router.patch('/:id/favorite', optionalAuth, async (req, res) => {
   try {
-    const blog = await Blog.findOne({ _id: req.params.id, userId: req.user._id });
+    const filter = { _id: req.params.id };
+    if (req.user) filter.userId = req.user._id;
+    
+    const blog = await Blog.findOne(filter);
     if (!blog) return res.status(404).json({ success: false, error: 'Blog not found.' });
     blog.isFavorite = !blog.isFavorite;
     await blog.save();
@@ -266,9 +269,12 @@ router.patch('/:id/favorite', protect, async (req, res) => {
   }
 });
 
-router.delete('/:id', protect, async (req, res) => {
+router.delete('/:id', optionalAuth, async (req, res) => {
   try {
-    const blog = await Blog.findOneAndDelete({ _id: req.params.id, userId: req.user._id });
+    const filter = { _id: req.params.id };
+    if (req.user) filter.userId = req.user._id;
+    
+    const blog = await Blog.findOneAndDelete(filter);
     if (!blog) return res.status(404).json({ success: false, error: 'Not found.' });
     res.json({ success: true, message: 'Deleted.' });
   } catch (error) {
