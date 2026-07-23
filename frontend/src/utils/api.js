@@ -1,5 +1,5 @@
 // src/utils/api.js
-// Centralized Axios instance with smart production base URL resolution
+// Centralized Axios instance with relative API path for unified Vercel deployment
 
 import axios from 'axios';
 
@@ -7,12 +7,7 @@ const getBaseURL = () => {
   if (process.env.REACT_APP_API_URL) {
     return process.env.REACT_APP_API_URL;
   }
-  // If running locally
-  if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
-    return 'http://localhost:5000/api';
-  }
-  // Production fallback to deployed backend service on Render
-  return 'https://ai-blog-writer-backend.onrender.com/api';
+  return '/api';
 };
 
 const api = axios.create({

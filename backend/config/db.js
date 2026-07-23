@@ -1,30 +1,27 @@
 // config/db.js
-// MongoDB connection using Mongoose
+// Serverless-friendly MongoDB connection using Mongoose
 
 const mongoose = require('mongoose');
 
+let isConnected = 0;
+
 const connectDB = async () => {
+  if (isConnected || mongoose.connection.readyState >= 1) {
+    return;
+  }
+
+  const uri = process.env.MONGODB_URI || 'mongodb://localhost:27017/ai-blog-writer';
+
   try {
-    const conn = await mongoose.connect(process.env.MONGODB_URI, {
-      // Mongoose 7+ doesn't need these options, but good to be explicit
-      serverSelectionTimeoutMS: 5000, // Timeout after 5s instead of 30s
+    const conn = await mongoose.connect(uri, {
+      serverSelectionTimeoutMS: 5000,
     });
 
+    isConnected = conn.connections[0].readyState;
     console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
-    
-    // Handle connection events
-    mongoose.connection.on('error', (err) => {
-      console.error('❌ MongoDB connection error:', err);
-    });
-
-    mongoose.connection.on('disconnected', () => {
-      console.warn('⚠️  MongoDB disconnected. Attempting to reconnect...');
-    });
-
   } catch (error) {
-    console.error('❌ MongoDB connection failed:', error.message);
-    // Exit process with failure if can't connect on startup
-    process.exit(1);
+    console.error('⚠️ MongoDB connection failed:', error.message);
+    // Do not call process.exit in serverless environment
   }
 };
 
