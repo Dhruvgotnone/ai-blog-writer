@@ -35,6 +35,23 @@ const UserSchema = new mongoose.Schema(
       default: 0,
     },
 
+    // SaaS Credit & Subscription Tier System
+    credits: {
+      type: Number,
+      default: 5,
+    },
+
+    tier: {
+      type: String,
+      enum: ['free', 'pro', 'agency'],
+      default: 'free',
+    },
+
+    totalCreditsPurchased: {
+      type: Number,
+      default: 0,
+    },
+
     // User avatar (initials-based by default)
     avatar: {
       type: String,

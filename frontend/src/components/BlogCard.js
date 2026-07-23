@@ -1,5 +1,5 @@
 // src/components/BlogCard.js
-// Card component for displaying saved blogs in history
+// Card component for displaying saved blogs in history with Cover Photos & SaaS badges
 
 import React, { useState } from 'react';
 import {
@@ -10,8 +10,8 @@ import {
   Eye,
   Copy,
   Check,
-  ChevronDown,
   ChevronUp,
+  Globe,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -44,7 +44,7 @@ const BlogCard = ({ blog, onDelete, onToggleFavorite }) => {
     try {
       await navigator.clipboard.writeText(blog.content);
       setCopied(true);
-      toast.success('Copied!');
+      toast.success('Copied to clipboard!');
       setTimeout(() => setCopied(false), 2000);
     } catch {
       toast.error('Failed to copy');
@@ -75,14 +75,26 @@ const BlogCard = ({ blog, onDelete, onToggleFavorite }) => {
     <div
       className={`bg-white dark:bg-ink-900 rounded-xl border ${
         blog.isFavorite
-          ? 'border-amber-300 dark:border-amber-700'
+          ? 'border-amber-400 dark:border-amber-600 shadow-md'
           : 'border-ink-100 dark:border-ink-800'
-      } shadow-paper hover:shadow-paper-lg transition-all duration-200 animate-fade-in`}
+      } shadow-paper hover:shadow-paper-lg transition-all duration-200 animate-fade-in overflow-hidden`}
     >
+      {/* Cover Image Thumbnail if available */}
+      {blog.coverImage && (
+        <div className="relative w-full h-40 overflow-hidden bg-ink-900">
+          <img
+            src={blog.coverImage}
+            alt={blog.topic}
+            className="w-full h-full object-cover"
+            onError={(e) => { e.target.style.display = 'none'; }}
+          />
+        </div>
+      )}
+
       <div className="p-5">
         {/* Header */}
-        <div className="flex items-start justify-between gap-3 mb-3">
-          <h3 className="font-display font-semibold text-ink-900 dark:text-ink-100 text-base leading-snug flex-1">
+        <div className="flex items-start justify-between gap-3 mb-2">
+          <h3 className="font-display font-bold text-ink-900 dark:text-ink-100 text-base leading-snug flex-1">
             {blog.topic}
           </h3>
           <button
@@ -107,6 +119,12 @@ const BlogCard = ({ blog, onDelete, onToggleFavorite }) => {
           >
             {blog.tone}
           </span>
+
+          {blog.language && blog.language !== 'English' && (
+            <span className="flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 font-semibold">
+              <Globe size={11} /> {blog.language}
+            </span>
+          )}
 
           {blog.isHumanized && (
             <span className="px-2 py-0.5 text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded-full border border-purple-200 dark:border-purple-800">
@@ -134,7 +152,7 @@ const BlogCard = ({ blog, onDelete, onToggleFavorite }) => {
             {blog.seoKeywords.map((kw) => (
               <span
                 key={kw}
-                className="flex items-center gap-0.5 px-1.5 py-0.5 text-xs bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 rounded"
+                className="flex items-center gap-0.5 px-1.5 py-0.5 text-xs bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 rounded"
               >
                 <Tag size={9} />
                 {kw}
@@ -157,7 +175,6 @@ const BlogCard = ({ blog, onDelete, onToggleFavorite }) => {
         {/* Action Buttons */}
         <div className="flex items-center justify-between pt-3 border-t border-ink-50 dark:border-ink-800">
           <div className="flex gap-2">
-            {/* Expand/Collapse */}
             <button
               onClick={() => setExpanded(!expanded)}
               className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-lg text-ink-600 dark:text-ink-400 hover:bg-ink-50 dark:hover:bg-ink-800 transition-colors"
@@ -168,20 +185,19 @@ const BlogCard = ({ blog, onDelete, onToggleFavorite }) => {
                 </>
               ) : (
                 <>
-                  <Eye size={13} /> Read More
+                  <Eye size={13} /> Read Full
                 </>
               )}
             </button>
 
-            {/* Copy */}
             <button
               onClick={copyContent}
               className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-lg text-ink-600 dark:text-ink-400 hover:bg-ink-50 dark:hover:bg-ink-800 transition-colors"
             >
               {copied ? (
                 <>
-                  <Check size={13} className="text-green-500" />
-                  <span className="text-green-600">Copied!</span>
+                  <Check size={13} className="text-emerald-500" />
+                  <span className="text-emerald-600">Copied!</span>
                 </>
               ) : (
                 <>
@@ -191,7 +207,6 @@ const BlogCard = ({ blog, onDelete, onToggleFavorite }) => {
             </button>
           </div>
 
-          {/* Delete */}
           <button
             onClick={handleDelete}
             disabled={deleting}

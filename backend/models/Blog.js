@@ -46,6 +46,30 @@ const BlogSchema = new mongoose.Schema(
       default: [],
     },
 
+    // AI Cover Image URL
+    coverImage: {
+      type: String,
+      default: null,
+    },
+
+    // Target Language
+    language: {
+      type: String,
+      default: 'English',
+    },
+
+    // AI Model used for generation
+    modelUsed: {
+      type: String,
+      default: 'mistralai/Mistral-7B-Instruct-v0.2',
+    },
+
+    // Blog Outline (if generated step-by-step)
+    outline: {
+      type: [String],
+      default: [],
+    },
+
     // Whether this was humanized/rewritten
     isHumanized: {
       type: Boolean,

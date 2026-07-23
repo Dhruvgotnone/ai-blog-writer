@@ -8,6 +8,8 @@ const useBlog = () => {
   const [generating, setGenerating] = useState(false);
   const [humanizing, setHumanizing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [loadingOutline, setLoadingOutline] = useState(false);
+  const [repurposing, setRepurposing] = useState(false);
   const [error, setError] = useState(null);
 
   const clearError = () => setError(null);
@@ -15,7 +17,7 @@ const useBlog = () => {
   /**
    * Generate a blog post via AI
    */
-  const generateBlog = async ({ topic, wordCount, tone, seoKeywords }) => {
+  const generateBlog = async ({ topic, wordCount, tone, seoKeywords, selectedModel, language, generateImage, outline }) => {
     setGenerating(true);
     setError(null);
 
@@ -25,6 +27,10 @@ const useBlog = () => {
         wordCount: parseInt(wordCount),
         tone,
         seoKeywords,
+        selectedModel,
+        language,
+        generateImage,
+        outline,
       });
 
       if (!data.success) throw new Error(data.error || 'Generation failed');
@@ -39,6 +45,44 @@ const useBlog = () => {
       throw new Error(message);
     } finally {
       setGenerating(false);
+    }
+  };
+
+  /**
+   * Generate outline items for step-by-step mode
+   */
+  const generateOutline = async (topic, tone = 'professional', language = 'English') => {
+    setLoadingOutline(true);
+    setError(null);
+    try {
+      const { data } = await api.post('/blogs/outline', { topic, tone, language });
+      if (!data.success) throw new Error(data.error || 'Failed to generate outline');
+      return data.data.outline;
+    } catch (err) {
+      const message = err.response?.data?.error || err.message || 'Outline generation failed.';
+      setError(message);
+      throw new Error(message);
+    } finally {
+      setLoadingOutline(false);
+    }
+  };
+
+  /**
+   * Repurpose blog into social media posts
+   */
+  const repurposeContent = async (content, topic) => {
+    setRepurposing(true);
+    setError(null);
+    try {
+      const { data } = await api.post('/blogs/repurpose', { content, topic });
+      if (!data.success) throw new Error(data.error || 'Repurposing failed');
+      return data.data.repurposedContent;
+    } catch (err) {
+      const message = err.response?.data?.error || err.message || 'Social media repurposing failed.';
+      setError(message);
+      throw new Error(message);
+    } finally {
+      setRepurposing(false);
     }
   };
 
@@ -130,9 +174,13 @@ const useBlog = () => {
     generating,
     humanizing,
     saving,
+    loadingOutline,
+    repurposing,
     error,
     clearError,
     generateBlog,
+    generateOutline,
+    repurposeContent,
     humanizeBlog,
     saveBlog,
     fetchBlogs,

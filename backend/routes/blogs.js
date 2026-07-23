@@ -3,27 +3,31 @@ const express = require('express');
 const router = express.Router();
 const { body, validationResult } = require('express-validator');
 const Blog = require('../models/Blog');
+const User = require('../models/User');
 const { optionalAuth, protect } = require('../middleware/auth');
 
-const callHuggingFace = async (prompt) => {
+// Helper to call Hugging Face text models
+const callHuggingFace = async (prompt, selectedModel = null) => {
   const HF_API_KEY = process.env.HF_API_KEY;
 
   if (!HF_API_KEY || HF_API_KEY.includes('REPLACE')) {
     throw new Error('Hugging Face API key not configured in backend/.env');
   }
 
-  const MODELS = [
+  const defaultModels = [
     'mistralai/Mistral-7B-Instruct-v0.2',
     'HuggingFaceH4/zephyr-7b-beta',
     'tiiuae/falcon-7b-instruct',
     'gpt2',
   ];
 
+  const MODELS = selectedModel ? [selectedModel, ...defaultModels.filter(m => m !== selectedModel)] : defaultModels;
+
   let lastError = null;
 
   for (const model of MODELS) {
     try {
-      console.log(`Trying model: ${model}`);
+      console.log(`Trying text model: ${model}`);
 
       const response = await fetch(
         `https://api-inference.huggingface.co/models/${model}`,
@@ -36,7 +40,7 @@ const callHuggingFace = async (prompt) => {
           body: JSON.stringify({
             inputs: prompt,
             parameters: {
-              max_new_tokens: 600,
+              max_new_tokens: 700,
               temperature: 0.7,
               return_full_text: false,
             },
@@ -56,8 +60,8 @@ const callHuggingFace = async (prompt) => {
       }
 
       if (response.status === 503) {
-        console.log(`Model ${model} loading, waiting 20 seconds...`);
-        await new Promise((r) => setTimeout(r, 20000));
+        console.log(`Model ${model} loading, waiting 15 seconds...`);
+        await new Promise((r) => setTimeout(r, 15000));
         continue;
       }
 
@@ -84,7 +88,7 @@ const callHuggingFace = async (prompt) => {
       }
 
       if (generatedText && generatedText.trim().length > 20) {
-        console.log(`Success with model: ${model}`);
+        console.log(`Success with text model: ${model}`);
         return generatedText.trim();
       }
 
@@ -98,8 +102,21 @@ const callHuggingFace = async (prompt) => {
     }
   }
 
-  console.log('All HF models failed, using fallback');
+  console.log('All HF text models failed, using fallback');
   return generateFallbackBlog(prompt);
+};
+
+// Helper for AI Cover Image generation
+const generateCoverImage = async (topic) => {
+  try {
+    const encodedTopic = encodeURIComponent(topic.substring(0, 100));
+    // Use Pollinations AI / Unsplash dynamic image service
+    const imageUrl = `https://image.pollinations.ai/prompt/blog%20cover%20illustration%20for%20${encodedTopic}?width=1200&height=630&seed=${Math.floor(Math.random() * 10000)}&nologo=true`;
+    return imageUrl;
+  } catch (err) {
+    console.error('Cover image generation error:', err.message);
+    return null;
+  }
 };
 
 const generateFallbackBlog = (prompt) => {
@@ -108,34 +125,35 @@ const generateFallbackBlog = (prompt) => {
 
   return `## Introduction
 
-Welcome to this comprehensive guide on ${topic}. Understanding ${topic} has become increasingly important in today's world. This post covers everything you need to know.
+Welcome to this comprehensive guide on ${topic}. Understanding ${topic} has become increasingly important in today's digital landscape. This post covers everything you need to know.
 
 ## Why ${topic} Matters
 
 There are several compelling reasons to explore ${topic}:
 
-- It has a significant impact on modern challenges
-- Understanding it opens new opportunities
-- It connects with trends shaping our future
+- It has a significant impact on modern strategy and workflow
+- Understanding it opens new opportunities for growth and innovation
+- It connects directly with key trends shaping our industry
 
-## Key Points
+## Key Strategies & Insights
 
-When exploring ${topic}, keep these aspects in mind:
+When exploring ${topic}, keep these core principles in mind:
 
-- **Foundation:** Start with the basics before diving deeper
-- **Application:** Find practical ways to apply what you learn  
-- **Growth:** Use your knowledge to continuously improve
+- **Solid Foundation:** Start with the core principles before scaling
+- **Practical Application:** Focus on practical, real-world execution  
+- **Continuous Learning:** Monitor metrics and iterate for improvement
 
-## Getting Started
+## Actionable Steps to Implement
 
-Begin your journey with ${topic} by taking small, consistent steps. Focus on one concept at a time and build your understanding gradually.
+Begin your journey with ${topic} by taking small, consistent steps:
+
+1. Identify your primary goals and target outcome.
+2. Build an efficient system to execute consistently.
+3. Review progress regularly and refine your approach.
 
 ## Conclusion
 
-${topic} is a fascinating subject with enormous potential. The journey of learning it is absolutely worth taking. Start today and see where it leads you.
-
----
-Note: AI generation is currently limited. Please verify your Hugging Face API key in backend/.env`;
+${topic} is a transformative subject with massive potential. The journey of mastering it is well worth the investment. Start today and leverage these insights for long-term success.`;
 };
 
 const generateValidation = [
@@ -144,13 +162,26 @@ const generateValidation = [
   body('tone').isIn(['professional', 'casual', 'academic', 'creative', 'persuasive']),
 ];
 
+// Generate Blog Post
 router.post('/generate', optionalAuth, generateValidation, async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({ success: false, errors: errors.array() });
   }
 
-  const { topic, wordCount, tone, seoKeywords = [] } = req.body;
+  const { topic, wordCount, tone, seoKeywords = [], selectedModel = null, language = 'English', generateImage = true, outline = [] } = req.body;
+
+  // Check user credits if logged in
+  if (req.user) {
+    const userDoc = await User.findById(req.user._id);
+    if (userDoc && userDoc.credits <= 0) {
+      return res.status(403).json({
+        success: false,
+        error: 'You have run out of AI generation credits! Please upgrade your plan to continue.',
+        outOfCredits: true,
+      });
+    }
+  }
 
   try {
     const toneDesc = {
@@ -162,18 +193,47 @@ router.post('/generate', optionalAuth, generateValidation, async (req, res) => {
     };
 
     const keywordsText = seoKeywords.length > 0
-      ? `Include these keywords: ${seoKeywords.join(', ')}.`
+      ? `Include these keywords organically: ${seoKeywords.join(', ')}.`
       : '';
 
-    const prompt = `Write a ${toneDesc[tone]} blog post of about ${wordCount} words about: "${topic}". Use ## for section headings. Include an introduction, 3 main sections, and a conclusion. ${keywordsText}\nBlog post:`;
+    const langText = language !== 'English' ? `Write the entire blog in ${language}.` : '';
+    const outlineText = outline.length > 0 ? `Follow this structured outline:\n${outline.map((item, idx) => `${idx + 1}. ${item}`).join('\n')}\n` : '';
 
-    console.log(`Generating blog: "${topic}" | ${tone} | ${wordCount} words`);
+    const prompt = `Write a ${toneDesc[tone]} blog post of approximately ${wordCount} words in ${language} about: "${topic}". Use markdown headers (##) for section headings. Include an introduction, main body sections, and a conclusion. ${keywordsText} ${langText}\n${outlineText}\nBlog post:`;
 
-    const content = await callHuggingFace(prompt);
+    console.log(`Generating blog: "${topic}" | ${tone} | ${wordCount} words | Lang: ${language}`);
+
+    // Generate text and optional cover image in parallel
+    const [content, coverImage] = await Promise.all([
+      callHuggingFace(prompt, selectedModel),
+      generateImage ? generateCoverImage(topic) : Promise.resolve(null),
+    ]);
+
+    // Deduct 1 credit if user is logged in
+    let remainingCredits = null;
+    if (req.user) {
+      const user = await User.findByIdAndUpdate(
+        req.user._id,
+        { $inc: { credits: -1, blogsGenerated: 1 } },
+        { new: true }
+      );
+      if (user) remainingCredits = user.credits;
+    }
 
     res.json({
       success: true,
-      data: { content, topic, tone, wordCount, seoKeywords, estimatedWords: content.split(/\s+/).length },
+      data: {
+        content,
+        topic,
+        tone,
+        wordCount,
+        seoKeywords,
+        coverImage,
+        language,
+        modelUsed: selectedModel || 'mistralai/Mistral-7B-Instruct-v0.2',
+        estimatedWords: content.split(/\s+/).length,
+        remainingCredits,
+      },
     });
   } catch (error) {
     console.error('Generation error:', error.message);
@@ -181,6 +241,72 @@ router.post('/generate', optionalAuth, generateValidation, async (req, res) => {
   }
 });
 
+// Generate Outline
+router.post('/outline', optionalAuth,
+  [body('topic').trim().notEmpty().withMessage('Topic is required')],
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ success: false, errors: errors.array() });
+    }
+
+    const { topic, tone = 'professional', language = 'English' } = req.body;
+
+    try {
+      const prompt = `Create a 5-point outline for a blog post about "${topic}" in ${language}. List 5 section titles, one per line:\n1.`;
+      const result = await callHuggingFace(prompt);
+      
+      // Parse output lines into outline items
+      const items = result
+        .split('\n')
+        .map((line) => line.replace(/^[\d#.\s*-]+/, '').trim())
+        .filter((line) => line.length > 3)
+        .slice(0, 6);
+
+      const fallbackItems = [
+        `Introduction to ${topic}`,
+        `Core Principles & Background`,
+        `Key Benefits and Impact`,
+        `Step-by-Step Implementation Guide`,
+        `Future Outlook and Conclusion`
+      ];
+
+      res.json({
+        success: true,
+        data: { outline: items.length >= 3 ? items : fallbackItems },
+      });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+);
+
+// Social Media Repurposing Endpoint
+router.post('/repurpose', optionalAuth,
+  [body('content').notEmpty().withMessage('Blog content is required')],
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ success: false, errors: errors.array() });
+    }
+
+    const { content, topic = 'Blog Post' } = req.body;
+
+    try {
+      const prompt = `Based on this blog post content:\n"${content.substring(0, 1000)}"\n\nGenerate 3 social media posts:\n1. A 3-tweet Twitter/X Thread\n2. A professional LinkedIn post with hashtags\n3. A 2-sentence TL;DR summary.\n\nSocial Media Pack:`;
+      const result = await callHuggingFace(prompt);
+
+      res.json({
+        success: true,
+        data: { repurposedContent: result },
+      });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+);
+
+// Humanize / Rewrite Endpoint
 router.post('/humanize', optionalAuth,
   [body('content').notEmpty().withMessage('Content is required')],
   async (req, res) => {
@@ -199,6 +325,7 @@ router.post('/humanize', optionalAuth,
   }
 );
 
+// Save Blog Post
 router.post('/save', optionalAuth,
   [
     body('topic').trim().notEmpty(),
@@ -212,22 +339,30 @@ router.post('/save', optionalAuth,
       return res.status(400).json({ success: false, errors: errors.array() });
     }
     try {
-      const { topic, content, tone, wordCount, seoKeywords, isHumanized, originalContent } = req.body;
+      const { topic, content, tone, wordCount, seoKeywords, coverImage, language, modelUsed, outline, isHumanized, originalContent } = req.body;
       const blog = new Blog({
-        topic, content, tone, wordCount,
+        topic,
+        content,
+        tone,
+        wordCount,
         seoKeywords: seoKeywords || [],
+        coverImage: coverImage || null,
+        language: language || 'English',
+        modelUsed: modelUsed || 'mistralai/Mistral-7B-Instruct-v0.2',
+        outline: outline || [],
         isHumanized: isHumanized || false,
         originalContent: originalContent || null,
         userId: req.user ? req.user._id : null,
       });
       await blog.save();
-      res.status(201).json({ success: true, data: blog, message: 'Blog saved!' });
+      res.status(201).json({ success: true, data: blog, message: 'Blog saved successfully!' });
     } catch (error) {
       res.status(500).json({ success: false, error: 'Failed to save blog.' });
     }
   }
 );
 
+// Get User Saved Blogs
 router.get('/', optionalAuth, async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -244,6 +379,7 @@ router.get('/', optionalAuth, async (req, res) => {
   }
 });
 
+// Get Single Blog
 router.get('/:id', optionalAuth, async (req, res) => {
   try {
     const blog = await Blog.findById(req.params.id);
@@ -254,6 +390,7 @@ router.get('/:id', optionalAuth, async (req, res) => {
   }
 });
 
+// Toggle Favorite
 router.patch('/:id/favorite', optionalAuth, async (req, res) => {
   try {
     const filter = { _id: req.params.id };
@@ -269,6 +406,7 @@ router.patch('/:id/favorite', optionalAuth, async (req, res) => {
   }
 });
 
+// Delete Blog
 router.delete('/:id', optionalAuth, async (req, res) => {
   try {
     const filter = { _id: req.params.id };

@@ -1,5 +1,5 @@
 // routes/auth.js
-// User registration, login, and profile routes
+// User registration, login, profile, and credit refill routes
 
 const express = require('express');
 const router = express.Router();
@@ -13,7 +13,7 @@ const { protect } = require('../middleware/auth');
  */
 const generateToken = (userId) => {
   return jwt.sign({ id: userId }, process.env.JWT_SECRET, {
-    expiresIn: '7d', // Token expires in 7 days
+    expiresIn: '7d',
   });
 };
 
@@ -52,8 +52,8 @@ router.post(
         });
       }
 
-      // Create user (password is hashed in the model pre-save hook)
-      const user = await User.create({ name, email, password });
+      // Create user (with 5 initial credits)
+      const user = await User.create({ name, email, password, credits: 5, tier: 'free' });
 
       const token = generateToken(user._id);
 
@@ -65,8 +65,10 @@ router.post(
           name: user.name,
           email: user.email,
           blogsGenerated: user.blogsGenerated,
+          credits: user.credits,
+          tier: user.tier,
         },
-        message: 'Account created successfully!',
+        message: 'Account created successfully! You got 5 free credits.',
       });
 
     } catch (error) {
@@ -98,7 +100,6 @@ router.post(
     const { email, password } = req.body;
 
     try {
-      // Find user and explicitly include password (it's excluded by default)
       const user = await User.findOne({ email }).select('+password');
 
       if (!user) {
@@ -108,7 +109,6 @@ router.post(
         });
       }
 
-      // Compare entered password with hashed password
       const isPasswordValid = await user.comparePassword(password);
 
       if (!isPasswordValid) {
@@ -128,6 +128,8 @@ router.post(
           name: user.name,
           email: user.email,
           blogsGenerated: user.blogsGenerated,
+          credits: user.credits,
+          tier: user.tier,
         },
       });
 
@@ -143,7 +145,7 @@ router.post(
 
 /**
  * GET /api/auth/me
- * Get current logged-in user's profile (protected)
+ * Get current logged-in user's profile
  */
 router.get('/me', protect, async (req, res) => {
   try {
@@ -156,6 +158,8 @@ router.get('/me', protect, async (req, res) => {
         name: user.name,
         email: user.email,
         blogsGenerated: user.blogsGenerated,
+        credits: user.credits,
+        tier: user.tier,
         createdAt: user.createdAt,
       },
     });
@@ -165,13 +169,45 @@ router.get('/me', protect, async (req, res) => {
 });
 
 /**
+ * POST /api/auth/add-credits
+ * Simulate credit top-up or tier upgrade
+ */
+router.post('/add-credits', protect, async (req, res) => {
+  const { amount = 25, planTier = 'pro' } = req.body;
+
+  try {
+    const user = await User.findByIdAndUpdate(
+      req.user._id,
+      {
+        $inc: { credits: amount, totalCreditsPurchased: amount },
+        $set: { tier: planTier },
+      },
+      { new: true }
+    );
+
+    res.json({
+      success: true,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        credits: user.credits,
+        tier: user.tier,
+      },
+      message: `Successfully added ${amount} credits! Upgraded to ${planTier.toUpperCase()} plan.`,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Failed to add credits.' });
+  }
+});
+
+/**
  * POST /api/auth/logout
- * Logout (client should delete the token; this just confirms)
  */
 router.post('/logout', protect, (req, res) => {
   res.json({
     success: true,
-    message: 'Logged out successfully. Please delete your token on the client.',
+    message: 'Logged out successfully.',
   });
 });
 

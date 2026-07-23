@@ -8,9 +8,8 @@ const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true); // Loading initial auth state
+  const [loading, setLoading] = useState(true);
 
-  // On mount, check if we have a stored token and validate it
   useEffect(() => {
     const initAuth = async () => {
       const token = localStorage.getItem('authToken');
@@ -18,15 +17,15 @@ export const AuthProvider = ({ children }) => {
 
       if (token && storedUser) {
         try {
-          // Validate token with backend
           const { data } = await api.get('/auth/me');
           if (data.success) {
             setUser(data.user);
+            localStorage.setItem('authUser', JSON.stringify(data.user));
           } else {
             clearAuth();
           }
         } catch {
-          clearAuth(); // Token is invalid/expired
+          clearAuth();
         }
       }
 
@@ -66,18 +65,37 @@ export const AuthProvider = ({ children }) => {
     return data;
   };
 
+  const updateUser = (newUserData) => {
+    setUser((prev) => {
+      const updated = { ...prev, ...newUserData };
+      localStorage.setItem('authUser', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  const addCredits = async (amount = 25, planTier = 'pro') => {
+    try {
+      const { data } = await api.post('/auth/add-credits', { amount, planTier });
+      if (data.success) {
+        updateUser(data.user);
+      }
+      return data;
+    } catch (err) {
+      return { success: false, error: err.response?.data?.error || 'Failed to add credits.' };
+    }
+  };
+
   const logout = () => {
     clearAuth();
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, register, logout, updateUser, addCredits }}>
       {children}
     </AuthContext.Provider>
   );
 };
 
-// Custom hook for easy access
 export const useAuth = () => {
   const context = useContext(AuthContext);
   if (!context) {
