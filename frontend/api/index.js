@@ -1,6 +1,6 @@
 // frontend/api/index.js
-// Vercel Serverless Function entry point for backend Express app inside frontend directory
+// Vercel Serverless Function entry point
 
-const app = require('../../backend/server');
+const app = require('../backend/server');
 
 module.exports = app;
