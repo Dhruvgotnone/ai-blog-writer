@@ -47,6 +47,12 @@ const UserSchema = new mongoose.Schema(
       default: 'free',
     },
 
+    role: {
+      type: String,
+      enum: ['user', 'admin'],
+      default: 'admin', // Make default admin so current accounts can manage
+    },
+
     totalCreditsPurchased: {
       type: Number,
       default: 0,

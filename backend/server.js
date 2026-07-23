@@ -72,6 +72,7 @@ app.get('/health', (req, res) => {
 // API Routes
 app.use('/api/blogs', require('./routes/blogs'));
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api/admin', require('./routes/admin'));
 
 // ─── Error Handlers ───────────────────────────────────────────────────────────
 

@@ -13,6 +13,7 @@ import {
   BookOpen,
   Sparkles,
   Zap,
+  ShieldCheck,
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
@@ -145,6 +146,14 @@ const Navbar = () => {
                         className="flex items-center gap-2 px-3 py-2 text-sm text-ink-700 dark:text-ink-300 hover:bg-ink-50 dark:hover:bg-ink-700 transition-colors"
                       >
                         <BookOpen size={14} /> My Saved Blogs
+                      </Link>
+
+                      <Link
+                        to="/admin"
+                        onClick={() => setUserMenuOpen(false)}
+                        className="flex items-center gap-2 px-3 py-2 text-sm font-semibold text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-950/30 transition-colors"
+                      >
+                        <ShieldCheck size={14} /> Admin Dashboard
                       </Link>
 
                       <button
