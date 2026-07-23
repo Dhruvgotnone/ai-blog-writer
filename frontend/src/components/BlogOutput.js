@@ -46,17 +46,16 @@ const BlogOutput = ({
 }) => {
   const { repurposeContent, repurposing } = useBlog();
   const [copied, setCopied] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState('article'); // 'article', 'seo', 'repurpose'
-  const [editableContent, setEditableContent] = useState(blog.content);
+  const [editableContent, setEditableContent] = useState(blog.content || '');
   const [repurposedData, setRepurposedData] = useState(null);
 
-  const wordCount = editableContent.split(/\s+/).filter(Boolean).length;
+  const wordCount = (editableContent || '').split(/\s+/).filter(Boolean).length;
   const readingTime = Math.ceil(wordCount / 200);
 
   // Flesch-Kincaid Readability Calculation
-  const sentences = editableContent.split(/[.!?]+/).filter(Boolean).length || 1;
-  const syllables = (editableContent.match(/[aeiouy]{1,2}/g) || []).length || 1;
+  const sentences = (editableContent || '').split(/[.!?]+/).filter(Boolean).length || 1;
+  const syllables = ((editableContent || '').match(/[aeiouy]{1,2}/g) || []).length || 1;
   const readabilityScore = Math.max(0, Math.min(100, Math.round(206.835 - 1.015 * (wordCount / sentences) - 84.6 * (syllables / wordCount))));
 
   const getReadabilityLabel = (score) => {

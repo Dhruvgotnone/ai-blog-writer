@@ -12,7 +12,6 @@ import {
   Trash2,
   RefreshCw,
   Search,
-  CheckCircle,
 } from 'lucide-react';
 import api from '../utils/api';
 import toast from 'react-hot-toast';

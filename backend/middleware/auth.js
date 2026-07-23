@@ -1,17 +1,17 @@
 // middleware/auth.js
-// JWT authentication middleware
+// JWT authentication middleware with fallback secret handling
 
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
+const getJwtSecret = () => process.env.JWT_SECRET || 'inkwell_ai_default_jwt_secret_key_2026';
+
 /**
  * Protect routes - verify JWT token
- * Use as middleware: router.get('/protected', protect, handler)
  */
 const protect = async (req, res, next) => {
   let token;
 
-  // Check for Bearer token in Authorization header
   if (
     req.headers.authorization &&
     req.headers.authorization.startsWith('Bearer')
@@ -27,16 +27,13 @@ const protect = async (req, res, next) => {
   }
 
   try {
-    // Verify token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-    // Attach user to request object
+    const decoded = jwt.verify(token, getJwtSecret());
     req.user = await User.findById(decoded.id).select('-password');
 
     if (!req.user) {
       return res.status(401).json({
         success: false,
-        error: 'User no longer exists.',
+        error: 'User account no longer exists.',
       });
     }
 
@@ -51,7 +48,6 @@ const protect = async (req, res, next) => {
 
 /**
  * Optional auth - attach user if token present, but don't block if not
- * Use for routes that work with or without auth
  */
 const optionalAuth = async (req, res, next) => {
   let token;
@@ -65,10 +61,9 @@ const optionalAuth = async (req, res, next) => {
 
   if (token) {
     try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const decoded = jwt.verify(token, getJwtSecret());
       req.user = await User.findById(decoded.id).select('-password');
     } catch (error) {
-      // Token invalid, but we won't block the request
       req.user = null;
     }
   }

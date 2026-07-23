@@ -16,74 +16,103 @@ const callHuggingFace = async (prompt, options = {}, selectedModel = null) => {
   }
 
   const defaultModels = [
-    'Qwen/Qwen2.5-Coder-32B-Instruct',
-    'meta-llama/Llama-3.2-1B-Instruct',
+    'Qwen/Qwen2.5-72B-Instruct',
+    'meta-llama/Llama-3.2-3B-Instruct',
     'mistralai/Mistral-7B-Instruct-v0.3',
     'HuggingFaceH4/zephyr-7b-beta',
   ];
 
   const MODELS = selectedModel ? [selectedModel, ...defaultModels.filter(m => m !== selectedModel)] : defaultModels;
 
+  // 1. Try Hugging Face Chat Completions Router API
   for (const model of MODELS) {
     try {
-      console.log(`Trying text model: ${model}`);
+      console.log(`Trying HF Chat Completions API: ${model}`);
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000);
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
 
-      const response = await fetch(
-        `https://api-inference.huggingface.co/models/${model}`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${HF_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            inputs: prompt,
-            parameters: {
-              max_new_tokens: 600,
-              temperature: 0.7,
-              return_full_text: false,
+      const response = await fetch('https://router.huggingface.co/hf-inference/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${HF_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            {
+              role: 'system',
+              content: 'You are an expert AI blog writer. Write comprehensive, engaging, beautifully structured Markdown blog posts with clear section headers (##) based on the user prompt.',
             },
-            options: {
-              wait_for_model: false,
-              use_cache: true,
+            {
+              role: 'user',
+              content: prompt,
             },
-          }),
-          signal: controller.signal,
-        }
-      );
+          ],
+          max_tokens: 1200,
+          temperature: 0.7,
+        }),
+        signal: controller.signal,
+      });
 
       clearTimeout(timeoutId);
 
-      if (!response.ok) {
-        console.log(`Model ${model} returned status ${response.status}, trying next...`);
-        continue;
-      }
-
-      const data = await response.json();
-
-      let generatedText = null;
-      if (Array.isArray(data) && data[0]?.generated_text) {
-        generatedText = data[0].generated_text;
-      } else if (data?.generated_text) {
-        generatedText = data.generated_text;
-      } else if (typeof data === 'string') {
-        generatedText = data;
-      }
-
-      if (generatedText && generatedText.trim().length > 20) {
-        console.log(`Success with text model: ${model}`);
-        return generatedText.trim();
+      if (response.ok) {
+        const data = await response.json();
+        const content = data.choices?.[0]?.message?.content;
+        if (content && content.trim().length > 50) {
+          console.log(`✅ Success with HF Chat API: ${model}`);
+          return content.trim();
+        }
       }
     } catch (err) {
-      console.log(`Model ${model} call failed/timed out:`, err.message);
-      continue;
+      console.log(`HF Chat API ${model} failed/timed out:`, err.message);
     }
   }
 
-  console.log('All HF text models timed out or failed, using dynamic custom blog generator');
+  // 2. Fallback to Legacy HF Models API
+  for (const model of MODELS) {
+    try {
+      console.log(`Trying Legacy HF Model API: ${model}`);
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+      const response = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${HF_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          inputs: prompt,
+          parameters: {
+            max_new_tokens: 700,
+            temperature: 0.7,
+            return_full_text: false,
+          },
+          options: { wait_for_model: false, use_cache: true },
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        const data = await response.json();
+        let text = Array.isArray(data) ? data[0]?.generated_text : data?.generated_text;
+        if (text && text.trim().length > 50) {
+          console.log(`✅ Success with Legacy HF Model API: ${model}`);
+          return text.trim();
+        }
+      }
+    } catch (err) {
+      console.log(`Legacy HF Model API ${model} failed:`, err.message);
+    }
+  }
+
+  console.log('All HF endpoints timed out or failed, using dynamic custom blog synthesizer');
   return buildCustomBlog(options);
 };
 

@@ -1,5 +1,5 @@
 // src/context/AuthContext.js
-// Global auth state using React Context
+// Global auth state using React Context with resilient user session restoration
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import api from '../utils/api';
@@ -15,17 +15,25 @@ export const AuthProvider = ({ children }) => {
       const token = localStorage.getItem('authToken');
       const storedUser = localStorage.getItem('authUser');
 
-      if (token && storedUser) {
+      if (storedUser) {
+        try {
+          setUser(JSON.parse(storedUser));
+        } catch (e) {
+          console.warn('Failed to parse cached authUser JSON');
+        }
+      }
+
+      if (token) {
         try {
           const { data } = await api.get('/auth/me');
-          if (data.success) {
+          if (data.success && data.user) {
             setUser(data.user);
             localStorage.setItem('authUser', JSON.stringify(data.user));
-          } else {
+          }
+        } catch (err) {
+          if (err.response?.status === 401) {
             clearAuth();
           }
-        } catch {
-          clearAuth();
         }
       }
 
@@ -42,9 +50,12 @@ export const AuthProvider = ({ children }) => {
   };
 
   const login = async (email, password) => {
-    const { data } = await api.post('/auth/login', { email, password });
+    const { data } = await api.post('/auth/login', {
+      email: (email || '').trim().toLowerCase(),
+      password,
+    });
 
-    if (data.success) {
+    if (data.success && data.user) {
       localStorage.setItem('authToken', data.token);
       localStorage.setItem('authUser', JSON.stringify(data.user));
       setUser(data.user);
@@ -54,9 +65,13 @@ export const AuthProvider = ({ children }) => {
   };
 
   const register = async (name, email, password) => {
-    const { data } = await api.post('/auth/register', { name, email, password });
+    const { data } = await api.post('/auth/register', {
+      name: (name || '').trim(),
+      email: (email || '').trim().toLowerCase(),
+      password,
+    });
 
-    if (data.success) {
+    if (data.success && data.user) {
       localStorage.setItem('authToken', data.token);
       localStorage.setItem('authUser', JSON.stringify(data.user));
       setUser(data.user);
@@ -76,7 +91,7 @@ export const AuthProvider = ({ children }) => {
   const addCredits = async (amount = 25, planTier = 'pro') => {
     try {
       const { data } = await api.post('/auth/add-credits', { amount, planTier });
-      if (data.success) {
+      if (data.success && data.user) {
         updateUser(data.user);
       }
       return data;

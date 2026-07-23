@@ -15,10 +15,10 @@ const TONES = [
 ];
 
 const MODELS = [
-  { value: 'mistralai/Mistral-7B-Instruct-v0.2', name: 'Mistral 7B (Recommended)', badge: 'Fast & High Quality' },
-  { value: 'HuggingFaceH4/zephyr-7b-beta', name: 'Zephyr 7B', badge: 'Creative & Engaging' },
-  { value: 'tiiuae/falcon-7b-instruct', name: 'Falcon 7B', badge: 'Detailed & Technical' },
-  { value: 'gpt2', name: 'GPT-2', badge: 'Lightweight & Fast' },
+  { value: 'Qwen/Qwen2.5-72B-Instruct', name: 'Qwen 2.5 72B (Recommended)', badge: 'Ultra Intelligent' },
+  { value: 'meta-llama/Llama-3.2-3B-Instruct', name: 'Llama 3.2 3B', badge: 'Fast & Creative' },
+  { value: 'mistralai/Mistral-7B-Instruct-v0.3', name: 'Mistral 7B v0.3', badge: 'High Precision' },
+  { value: 'HuggingFaceH4/zephyr-7b-beta', name: 'Zephyr 7B', badge: 'Engaging' },
 ];
 
 const LANGUAGES = [
@@ -38,7 +38,7 @@ const BlogForm = ({ onGenerate, generating }) => {
     wordCount: 500,
     tone: 'professional',
     seoKeywords: [],
-    selectedModel: 'mistralai/Mistral-7B-Instruct-v0.2',
+    selectedModel: 'Qwen/Qwen2.5-72B-Instruct',
     language: 'English',
     generateImage: true,
   });
