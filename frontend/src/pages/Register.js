@@ -37,7 +37,10 @@ const Register = () => {
       toast.success('Account created! Welcome to Inkwell AI!');
       navigate('/generate');
     } catch (err) {
-      const msg = err.response?.data?.error || 'Registration failed. Please try again.';
+      const msg =
+        err.response?.data?.error ||
+        (Array.isArray(err.response?.data?.errors) ? err.response?.data?.errors[0]?.msg || err.response?.data?.errors[0] : null) ||
+        'Registration failed. Could not reach backend server.';
       setError(msg);
     } finally {
       setLoading(false);

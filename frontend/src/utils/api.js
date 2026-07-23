@@ -1,19 +1,29 @@
 // src/utils/api.js
-// Centralized Axios instance with interceptors
+// Centralized Axios instance with smart production base URL resolution
 
 import axios from 'axios';
 
-// Create Axios instance with base config
+const getBaseURL = () => {
+  if (process.env.REACT_APP_API_URL) {
+    return process.env.REACT_APP_API_URL;
+  }
+  // If running locally
+  if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+    return 'http://localhost:5000/api';
+  }
+  // Production fallback to deployed backend service on Render
+  return 'https://ai-blog-writer-backend.onrender.com/api';
+};
+
 const api = axios.create({
-  baseURL: process.env.REACT_APP_API_URL || 'http://localhost:5000/api',
-  timeout: 60000, // 60 seconds (AI generation can be slow)
+  baseURL: getBaseURL(),
+  timeout: 60000, // 60 seconds
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
-// ── Request Interceptor ────────────────────────────────────────────────────────
-// Automatically attach JWT token to every request if available
+// Request Interceptor
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('authToken');
@@ -25,17 +35,13 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// ── Response Interceptor ───────────────────────────────────────────────────────
-// Handle auth errors globally
+// Response Interceptor
 api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      // Token expired or invalid - clear auth state
       localStorage.removeItem('authToken');
       localStorage.removeItem('authUser');
-      // Optionally redirect to login
-      // window.location.href = '/login';
     }
     return Promise.reject(error);
   }
