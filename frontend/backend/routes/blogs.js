@@ -6,6 +6,72 @@ const Blog = require('../models/Blog');
 const User = require('../models/User');
 const { optionalAuth, protect } = require('../middleware/auth');
 
+// Helper to call Grok API (xAI / Groq)
+const callGrokAPI = async (prompt, selectedModel = 'grok-beta') => {
+  const apiKey = process.env.GROK_API_KEY || process.env.XAI_API_KEY || process.env.GROQ_API_KEY;
+
+  if (!apiKey || apiKey.includes('REPLACE') || apiKey.includes('your_')) {
+    throw new Error('Grok API Key is missing. Please add GROK_API_KEY or XAI_API_KEY in Vercel Environment Variables.');
+  }
+
+  // Support both xAI Grok and Groq API keys
+  const isGroq = apiKey.startsWith('gsk_');
+  const endpoint = isGroq
+    ? 'https://api.groq.com/openai/v1/chat/completions'
+    : 'https://api.x.ai/v1/chat/completions';
+
+  const targetModel = isGroq ? 'llama-3.3-70b-versatile' : (selectedModel || 'grok-beta');
+
+  console.log(`🚀 Calling Grok API (${endpoint}) with model: ${targetModel}`);
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 9000);
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: targetModel,
+      messages: [
+        {
+          role: 'system',
+          content: 'You are Grok, an ultra-intelligent, witty, master AI blog writer. Write comprehensive, engaging, beautifully formatted Markdown blog posts with clear headings (##) based on the user prompt.',
+        },
+        {
+          role: 'user',
+          content: prompt,
+        },
+      ],
+      temperature: 0.7,
+      max_tokens: 1500,
+    }),
+    signal: controller.signal,
+  });
+
+  clearTimeout(timeoutId);
+
+  if (response.status === 401) {
+    throw new Error('Invalid Grok API Key. Please verify GROK_API_KEY / XAI_API_KEY in Vercel Environment Variables.');
+  }
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Grok API Error (${response.status}): ${errText}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content;
+
+  if (!content || content.trim().length < 30) {
+    throw new Error('Grok API returned empty text. Please try again.');
+  }
+
+  return content.trim();
+};
+
 // Helper to call Hugging Face text models with serverless timeout safety
 const callHuggingFace = async (prompt, selectedModel = null) => {
   const HF_API_KEY = process.env.HF_API_KEY;
@@ -122,18 +188,35 @@ const callHuggingFace = async (prompt, selectedModel = null) => {
         const data = await response.json();
         let text = Array.isArray(data) ? data[0]?.generated_text : data?.generated_text;
         if (text && text.trim().length > 50) {
-          console.log(`✅ Success with Legacy HF Model API: ${model}`);
+          console.log(`✅ Success with HF Model API: ${model}`);
           return text.trim();
         }
       }
     } catch (err) {
       if (err.message.includes('Invalid Hugging Face API Key')) throw err;
-      console.log(`Legacy HF Model API ${model} failed:`, err.message);
+      console.log(`HF Model API ${model} failed:`, err.message);
     }
   }
 
   // NO TEMPLATES - Throw explicit error if AI generation failed
   throw new Error(`AI Blog Generation failed (${lastErrorReason}). Please try selecting another model or verify your HF_API_KEY.`);
+};
+
+// Unified AI Text Router supporting Grok (xAI) and Hugging Face
+const callAITextModel = async (prompt, selectedModel = null) => {
+  const isGrokModel = selectedModel && (selectedModel.startsWith('grok') || selectedModel.includes('xai'));
+  const hasGrokKey = Boolean(process.env.GROK_API_KEY || process.env.XAI_API_KEY || process.env.GROQ_API_KEY);
+
+  if (isGrokModel || hasGrokKey) {
+    try {
+      return await callGrokAPI(prompt, selectedModel);
+    } catch (grokErr) {
+      if (isGrokModel) throw grokErr;
+      console.warn('Grok API failed, attempting Hugging Face fallback:', grokErr.message);
+    }
+  }
+
+  return await callHuggingFace(prompt, selectedModel);
 };
 
 // Helper for AI Cover Image generation
@@ -165,7 +248,10 @@ router.post('/generate', optionalAuth, generateValidation, async (req, res) => {
 
   // Check user credits if logged in
   if (req.user) {
-    const userDoc = await User.findById(req.user._id);
+    let userDoc = req.user;
+    if (!global.isInMemoryDB) {
+      try { userDoc = await User.findById(req.user._id); } catch(e) {}
+    }
     if (userDoc && userDoc.credits <= 0) {
       return res.status(403).json({
         success: false,
@@ -193,23 +279,31 @@ router.post('/generate', optionalAuth, generateValidation, async (req, res) => {
 
     const prompt = `Write a ${toneDesc[tone]} blog post of approximately ${wordCount} words in ${language} about: "${topic}". Use markdown headers (##) for section headings. Include an introduction, main body sections, and a conclusion. ${keywordsText} ${langText}\n${outlineText}\nBlog post:`;
 
-    console.log(`Generating blog: "${topic}" | ${tone} | ${wordCount} words | Lang: ${language}`);
+    console.log(`Generating blog with AI: "${topic}" | ${tone} | Model: ${selectedModel || 'Grok / Qwen'}`);
 
     // Generate text and optional cover image in parallel
     const [content, coverImage] = await Promise.all([
-      callHuggingFace(prompt, { topic, tone, wordCount, seoKeywords, outline, language }, selectedModel),
+      callAITextModel(prompt, selectedModel),
       generateImage ? generateCoverImage(topic) : Promise.resolve(null),
     ]);
 
     // Deduct 1 credit if user is logged in
     let remainingCredits = null;
     if (req.user) {
-      const user = await User.findByIdAndUpdate(
-        req.user._id,
-        { $inc: { credits: -1, blogsGenerated: 1 } },
-        { new: true }
-      );
-      if (user) remainingCredits = user.credits;
+      if (!global.isInMemoryDB) {
+        try {
+          const user = await User.findByIdAndUpdate(
+            req.user._id,
+            { $inc: { credits: -1, blogsGenerated: 1 } },
+            { new: true }
+          );
+          if (user) remainingCredits = user.credits;
+        } catch (e) {}
+      } else {
+        req.user.credits = Math.max(0, (req.user.credits || 5) - 1);
+        req.user.blogsGenerated = (req.user.blogsGenerated || 0) + 1;
+        remainingCredits = req.user.credits;
+      }
     }
 
     res.json({
@@ -222,7 +316,7 @@ router.post('/generate', optionalAuth, generateValidation, async (req, res) => {
         seoKeywords,
         coverImage,
         language,
-        modelUsed: selectedModel || 'mistralai/Mistral-7B-Instruct-v0.2',
+        modelUsed: selectedModel || 'Grok AI / Qwen 2.5',
         estimatedWords: content.split(/\s+/).length,
         remainingCredits,
       },
@@ -242,173 +336,150 @@ router.post('/outline', optionalAuth,
       return res.status(400).json({ success: false, errors: errors.array() });
     }
 
-    const { topic, tone = 'professional', language = 'English' } = req.body;
+    const { topic, tone = 'professional', language = 'English', selectedModel = null } = req.body;
 
     try {
       const prompt = `Create a 5-point outline for a blog post about "${topic}" in ${language}. List 5 section titles, one per line:\n1.`;
-      const result = await callHuggingFace(prompt);
+      const result = await callAITextModel(prompt, selectedModel);
       
-      // Parse output lines into outline items
       const items = result
         .split('\n')
         .map((line) => line.replace(/^[\d#.\s*-]+/, '').trim())
         .filter((line) => line.length > 3)
         .slice(0, 6);
 
-      const fallbackItems = [
-        `Introduction to ${topic}`,
-        `Core Principles & Background`,
-        `Key Benefits and Impact`,
-        `Step-by-Step Implementation Guide`,
-        `Future Outlook and Conclusion`
-      ];
-
       res.json({
         success: true,
-        data: { outline: items.length >= 3 ? items : fallbackItems },
+        outline: items.length >= 3 ? items : [
+          `Introduction to ${topic}`,
+          `Core Principles & Key Insights`,
+          `Practical Implementation Steps`,
+          `Future Trends & Considerations`,
+          `Conclusion & Summary`,
+        ],
       });
     } catch (error) {
-      res.status(500).json({ success: false, error: error.message });
-    }
-  }
-);
-
-// Social Media Repurposing Endpoint
-router.post('/repurpose', optionalAuth,
-  [body('content').notEmpty().withMessage('Blog content is required')],
-  async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ success: false, errors: errors.array() });
-    }
-
-    const { content, topic = 'Blog Post' } = req.body;
-
-    try {
-      const prompt = `Based on this blog post content:\n"${content.substring(0, 1000)}"\n\nGenerate 3 social media posts:\n1. A 3-tweet Twitter/X Thread\n2. A professional LinkedIn post with hashtags\n3. A 2-sentence TL;DR summary.\n\nSocial Media Pack:`;
-      const result = await callHuggingFace(prompt);
-
-      res.json({
-        success: true,
-        data: { repurposedContent: result },
-      });
-    } catch (error) {
-      res.status(500).json({ success: false, error: error.message });
-    }
-  }
-);
-
-// Humanize / Rewrite Endpoint
-router.post('/humanize', optionalAuth,
-  [body('content').notEmpty().withMessage('Content is required')],
-  async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ success: false, errors: errors.array() });
-    }
-    const { content } = req.body;
-    try {
-      const prompt = `Rewrite this blog post to sound more natural and human:\n\n${content.substring(0, 1500)}\n\nRewritten version:`;
-      const humanized = await callHuggingFace(prompt);
-      res.json({ success: true, data: { content: humanized, isHumanized: true } });
-    } catch (error) {
+      console.error('Outline generation error:', error.message);
       res.status(500).json({ success: false, error: error.message });
     }
   }
 );
 
 // Save Blog Post
-router.post('/save', optionalAuth,
-  [
-    body('topic').trim().notEmpty(),
-    body('content').notEmpty(),
-    body('tone').isIn(['professional', 'casual', 'academic', 'creative', 'persuasive']),
-    body('wordCount').isInt({ min: 100, max: 2000 }),
-  ],
-  async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ success: false, errors: errors.array() });
-    }
-    try {
-      const { topic, content, tone, wordCount, seoKeywords, coverImage, language, modelUsed, outline, isHumanized, originalContent } = req.body;
-      const blog = new Blog({
-        topic,
+router.post('/save', protect, async (req, res) => {
+  const { title, content, topic, tone, wordCount, seoKeywords, coverImage, language, isFavorite } = req.body;
+
+  try {
+    let blog;
+    if (!global.isInMemoryDB) {
+      blog = await Blog.create({
+        userId: req.user._id,
+        title: title || topic || 'Untitled Blog Post',
         content,
-        tone,
-        wordCount,
+        topic,
+        tone: tone || 'professional',
+        wordCount: wordCount || 500,
         seoKeywords: seoKeywords || [],
         coverImage: coverImage || null,
         language: language || 'English',
-        modelUsed: modelUsed || 'mistralai/Mistral-7B-Instruct-v0.2',
-        outline: outline || [],
-        isHumanized: isHumanized || false,
-        originalContent: originalContent || null,
-        userId: req.user ? req.user._id : null,
+        isFavorite: Boolean(isFavorite),
       });
-      await blog.save();
-      res.status(201).json({ success: true, data: blog, message: 'Blog saved successfully!' });
-    } catch (error) {
-      res.status(500).json({ success: false, error: 'Failed to save blog.' });
+    } else {
+      const id = 'blog_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+      blog = {
+        _id: id,
+        id,
+        userId: req.user._id || req.user.id,
+        title: title || topic || 'Untitled Blog Post',
+        content,
+        topic,
+        tone: tone || 'professional',
+        wordCount: wordCount || 500,
+        seoKeywords: seoKeywords || [],
+        coverImage: coverImage || null,
+        language: language || 'English',
+        isFavorite: Boolean(isFavorite),
+        createdAt: new Date().toISOString(),
+      };
+      global.memoryBlogs.unshift(blog);
     }
-  }
-);
 
-// Get User Saved Blogs
-router.get('/', optionalAuth, async (req, res) => {
-  try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const skip = (page - 1) * limit;
-    const filter = req.user ? { userId: req.user._id } : {};
-    const [blogs, total] = await Promise.all([
-      Blog.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
-      Blog.countDocuments(filter),
-    ]);
-    res.json({ success: true, data: blogs, pagination: { page, limit, total, pages: Math.ceil(total / limit) } });
+    res.status(201).json({
+      success: true,
+      blog,
+      message: 'Blog post saved successfully!',
+    });
   } catch (error) {
-    res.status(500).json({ success: false, error: 'Failed to fetch blogs.' });
+    console.error('Save blog error:', error.message);
+    res.status(500).json({ success: false, error: 'Failed to save blog post.' });
   }
 });
 
-// Get Single Blog
-router.get('/:id', optionalAuth, async (req, res) => {
+// Get User's Generation History
+router.get('/history', protect, async (req, res) => {
   try {
-    const blog = await Blog.findById(req.params.id);
-    if (!blog) return res.status(404).json({ success: false, error: 'Blog not found.' });
-    res.json({ success: true, data: blog });
+    let blogs = [];
+    if (!global.isInMemoryDB) {
+      blogs = await Blog.find({ userId: req.user._id }).sort({ createdAt: -1 });
+    } else {
+      const uId = req.user._id || req.user.id;
+      blogs = global.memoryBlogs.filter((b) => b.userId === uId);
+    }
+
+    res.json({
+      success: true,
+      count: blogs.length,
+      blogs,
+    });
   } catch (error) {
-    res.status(500).json({ success: false, error: 'Failed to fetch blog.' });
+    console.error('History error:', error.message);
+    res.status(500).json({ success: false, error: 'Failed to fetch generation history.' });
   }
 });
 
-// Toggle Favorite
-router.patch('/:id/favorite', optionalAuth, async (req, res) => {
+// Toggle Favorite Status
+router.patch('/:id/favorite', protect, async (req, res) => {
   try {
-    const filter = { _id: req.params.id };
-    if (req.user) filter.userId = req.user._id;
-    
-    const blog = await Blog.findOne(filter);
-    if (!blog) return res.status(404).json({ success: false, error: 'Blog not found.' });
-    blog.isFavorite = !blog.isFavorite;
-    await blog.save();
-    res.json({ success: true, data: { isFavorite: blog.isFavorite }, message: blog.isFavorite ? 'Added to favorites!' : 'Removed from favorites.' });
+    let blog;
+    if (!global.isInMemoryDB) {
+      blog = await Blog.findOne({ _id: req.params.id, userId: req.user._id });
+      if (blog) {
+        blog.isFavorite = !blog.isFavorite;
+        await blog.save();
+      }
+    } else {
+      blog = global.memoryBlogs.find((b) => (b._id === req.params.id || b.id === req.params.id));
+      if (blog) blog.isFavorite = !blog.isFavorite;
+    }
+
+    if (!blog) {
+      return res.status(404).json({ success: false, error: 'Blog not found.' });
+    }
+
+    res.json({
+      success: true,
+      blog,
+      message: blog.isFavorite ? 'Added to favorites!' : 'Removed from favorites.',
+    });
   } catch (error) {
-    res.status(500).json({ success: false, error: 'Failed to update.' });
+    res.status(500).json({ success: false, error: 'Failed to update favorite status.' });
   }
 });
 
-// Delete Blog
-router.delete('/:id', optionalAuth, async (req, res) => {
+// Delete Blog Post
+router.delete('/:id', protect, async (req, res) => {
   try {
-    const filter = { _id: req.params.id };
-    if (req.user) filter.userId = req.user._id;
-    
-    const blog = await Blog.findOneAndDelete(filter);
-    if (!blog) return res.status(404).json({ success: false, error: 'Not found.' });
-    res.json({ success: true, message: 'Deleted.' });
+    if (!global.isInMemoryDB) {
+      const blog = await Blog.findOneAndDelete({ _id: req.params.id, userId: req.user._id });
+      if (!blog) return res.status(404).json({ success: false, error: 'Blog not found.' });
+    } else {
+      const uId = req.user._id || req.user.id;
+      global.memoryBlogs = global.memoryBlogs.filter((b) => !(b.userId === uId && (b._id === req.params.id || b.id === req.params.id)));
+    }
+
+    res.json({ success: true, message: 'Blog post deleted successfully.' });
   } catch (error) {
-    res.status(500).json({ success: false, error: 'Failed to delete.' });
+    res.status(500).json({ success: false, error: 'Failed to delete blog post.' });
   }
 });
 

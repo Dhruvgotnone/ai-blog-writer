@@ -15,10 +15,11 @@ const TONES = [
 ];
 
 const MODELS = [
-  { value: 'Qwen/Qwen2.5-72B-Instruct', name: 'Qwen 2.5 72B (Recommended)', badge: 'Ultra Intelligent' },
+  { value: 'grok-beta', name: '🚀 Grok AI (xAI)', badge: 'Grok Ultra' },
+  { value: 'grok-2-latest', name: '⚡ Grok 2 (xAI)', badge: 'Grok 2' },
+  { value: 'Qwen/Qwen2.5-72B-Instruct', name: 'Qwen 2.5 72B', badge: 'Ultra Intelligent' },
   { value: 'meta-llama/Llama-3.2-3B-Instruct', name: 'Llama 3.2 3B', badge: 'Fast & Creative' },
   { value: 'mistralai/Mistral-7B-Instruct-v0.3', name: 'Mistral 7B v0.3', badge: 'High Precision' },
-  { value: 'HuggingFaceH4/zephyr-7b-beta', name: 'Zephyr 7B', badge: 'Engaging' },
 ];
 
 const LANGUAGES = [
@@ -38,7 +39,7 @@ const BlogForm = ({ onGenerate, generating }) => {
     wordCount: 500,
     tone: 'professional',
     seoKeywords: [],
-    selectedModel: 'Qwen/Qwen2.5-72B-Instruct',
+    selectedModel: 'grok-beta',
     language: 'English',
     generateImage: true,
   });
