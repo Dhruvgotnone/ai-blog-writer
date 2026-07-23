@@ -7,19 +7,19 @@ const User = require('../models/User');
 const { optionalAuth, protect } = require('../middleware/auth');
 
 // Helper to call Hugging Face text models with serverless timeout safety
-const callHuggingFace = async (prompt, selectedModel = null) => {
+const callHuggingFace = async (prompt, options = {}, selectedModel = null) => {
   const HF_API_KEY = process.env.HF_API_KEY;
 
   if (!HF_API_KEY || HF_API_KEY.includes('REPLACE') || HF_API_KEY.includes('your_')) {
-    console.log('HF_API_KEY not configured or using template, generating smart blog response');
-    return generateFallbackBlog(prompt);
+    console.log('HF_API_KEY not configured or using template, generating custom blog response');
+    return buildCustomBlog(options);
   }
 
   const defaultModels = [
-    'mistralai/Mistral-7B-Instruct-v0.2',
+    'Qwen/Qwen2.5-Coder-32B-Instruct',
+    'meta-llama/Llama-3.2-1B-Instruct',
+    'mistralai/Mistral-7B-Instruct-v0.3',
     'HuggingFaceH4/zephyr-7b-beta',
-    'tiiuae/falcon-7b-instruct',
-    'gpt2',
   ];
 
   const MODELS = selectedModel ? [selectedModel, ...defaultModels.filter(m => m !== selectedModel)] : defaultModels;
@@ -29,7 +29,7 @@ const callHuggingFace = async (prompt, selectedModel = null) => {
       console.log(`Trying text model: ${model}`);
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4500); // 4.5 second limit per model
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
 
       const response = await fetch(
         `https://api-inference.huggingface.co/models/${model}`,
@@ -83,15 +83,14 @@ const callHuggingFace = async (prompt, selectedModel = null) => {
     }
   }
 
-  console.log('All HF text models timed out or failed, using smart blog fallback');
-  return generateFallbackBlog(prompt);
+  console.log('All HF text models timed out or failed, using dynamic custom blog generator');
+  return buildCustomBlog(options);
 };
 
 // Helper for AI Cover Image generation
 const generateCoverImage = async (topic) => {
   try {
-    const encodedTopic = encodeURIComponent(topic.substring(0, 100));
-    // Use Pollinations AI / Unsplash dynamic image service
+    const encodedTopic = encodeURIComponent((topic || 'blog').substring(0, 100));
     const imageUrl = `https://image.pollinations.ai/prompt/blog%20cover%20illustration%20for%20${encodedTopic}?width=1200&height=630&seed=${Math.floor(Math.random() * 10000)}&nologo=true`;
     return imageUrl;
   } catch (err) {
@@ -100,41 +99,96 @@ const generateCoverImage = async (topic) => {
   }
 };
 
-const generateFallbackBlog = (prompt) => {
-  const topicMatch = prompt.match(/about:\s*"([^"]+)"/i);
-  const topic = topicMatch ? topicMatch[1].trim() : 'this topic';
+const buildCustomBlog = ({ topic, tone = 'professional', wordCount = 500, seoKeywords = [], outline = [], language = 'English' }) => {
+  const cleanTopic = topic ? topic.trim() : 'Modern Strategy & Innovation';
+  
+  const toneHooks = {
+    professional: {
+      intro: `In today's fast-evolving global landscape, **${cleanTopic}** has emerged as a critical domain of strategic growth and operational excellence. Organizations and practitioners must adapt swiftly to leverage its full potential.`,
+      style: `Analyzing ${cleanTopic} requires a disciplined approach, balancing risk mitigation with long-term value creation.`,
+      action: `Establish robust frameworks, measure performance metrics, and refine execution continuously.`,
+    },
+    casual: {
+      intro: `If you've been hearing a lot about **${cleanTopic}** lately, you're not alone! Whether you're a complete beginner or looking to sharpen your skills, this guide breaks down everything you need to know in plain English.`,
+      style: `The best part about ${cleanTopic} is that getting started is much easier than it seems once you know the core fundamentals.`,
+      action: `Take simple, practical steps every day and don't be afraid to experiment as you learn.`,
+    },
+    academic: {
+      intro: `The study of **${cleanTopic}** presents a critical domain of research with profound implications across operational paradigms. Empirical observations highlight its transformative influence on contemporary methodologies.`,
+      style: `Comprehensive examination reveals that ${cleanTopic} operates at the intersection of technological advancement and analytical reasoning.`,
+      action: `Further empirical inquiry and systematic review are recommended to evaluate long-term systemic impacts.`,
+    },
+    creative: {
+      intro: `Imagine a landscape transformed by the power of **${cleanTopic}**. Beyond the surface lies an inspiring world of creative possibilities waiting to be unlocked.`,
+      style: `Exploring ${cleanTopic} is an art as much as a science—it invites us to think outside traditional boundaries and re-imagine what is possible.`,
+      action: `Embrace experimentation, foster curiosity, and let your unique vision guide your approach to ${cleanTopic}.`,
+    },
+    persuasive: {
+      intro: `Why is **${cleanTopic}** the game-changer everyone is talking about? Because mastering it gives you a distinct, undeniable advantage over the competition.`,
+      style: `Ignoring ${cleanTopic} is no longer an option. The individuals and organizations that act now will lead the future, while those who wait risk falling behind.`,
+      action: `Don't wait for tomorrow—start leveraging ${cleanTopic} right now and secure your competitive edge!`,
+    },
+  };
 
-  return `## Introduction
+  const currentTone = toneHooks[tone] || toneHooks.professional;
 
-Welcome to this comprehensive guide on ${topic}. Understanding ${topic} has become increasingly important in today's digital landscape. This post covers everything you need to know.
+  // Build section outline dynamically
+  let sectionsMarkdown = '';
+  if (outline && outline.length > 0) {
+    sectionsMarkdown = outline.map((item, i) => `## ${i + 1}. ${item}
 
-## Why ${topic} Matters
+Deep-diving into **${item}** is essential when mastering **${cleanTopic}**. 
 
-There are several compelling reasons to explore ${topic}:
+Key considerations for this section:
+- **Strategic Impact:** Focus on high-leverage activities that drive real outcomes.
+- **Execution Blueprint:** Standardize workflows to ensure consistent results.
+- **Continuous Improvement:** Regularly evaluate progress and optimize your methods.`).join('\n\n');
+  } else {
+    sectionsMarkdown = `## 1. Understanding the Core Principles of ${cleanTopic}
 
-- It has a significant impact on modern strategy and workflow
-- Understanding it opens new opportunities for growth and innovation
-- It connects directly with key trends shaping our industry
+To excel in **${cleanTopic}**, it is essential to first understand the core principles that drive success. ${currentTone.style}
 
-## Key Strategies & Insights
+Key fundamentals include:
+- **Core Strategy:** Aligning goals with actionable benchmarks.
+- **Efficiency & Scalability:** Building systems that grow seamlessly without bottlenecking.
+- **Data-Driven Insights:** Leveraging measurable feedback to make informed decisions.
 
-When exploring ${topic}, keep these core principles in mind:
+## 2. Key Benefits & Advantages
 
-- **Solid Foundation:** Start with the core principles before scaling
-- **Practical Application:** Focus on practical, real-world execution  
-- **Continuous Learning:** Monitor metrics and iterate for improvement
+Adopting a modern approach to **${cleanTopic}** yields significant advantages:
 
-## Actionable Steps to Implement
+- **Enhanced Performance:** Streamlines complex workflows and reduces friction.
+- **Sustainable Growth:** Builds a resilient foundation for long-term progress.
+- **Competitive Edge:** Positions you ahead of industry trends and changing demands.
 
-Begin your journey with ${topic} by taking small, consistent steps:
+## 3. Actionable Best Practices
 
-1. Identify your primary goals and target outcome.
-2. Build an efficient system to execute consistently.
-3. Review progress regularly and refine your approach.
+Implementing **${cleanTopic}** effectively requires a structured roadmap:
+
+1. **Define Clear Objectives:** Outline your primary target outcomes before execution.
+2. **Execute Incrementally:** Focus on high-impact priority tasks first.
+3. **Monitor & Iterate:** Assess performance regularly and adapt based on real results.`;
+  }
+
+  // Build SEO keywords section if provided
+  let seoBlock = '';
+  if (seoKeywords && seoKeywords.length > 0) {
+    seoBlock = `\n\n> 🎯 **Key Focus Concepts:** ${seoKeywords.map(k => `\`${k}\``).join(', ')}`;
+  }
+
+  const blogMarkdown = `# ${cleanTopic}: The Complete Guide
+
+${currentTone.intro}${seoBlock}
+
+${sectionsMarkdown}
 
 ## Conclusion
 
-${topic} is a transformative subject with massive potential. The journey of mastering it is well worth the investment. Start today and leverage these insights for long-term success.`;
+Mastering **${cleanTopic}** is a continuous journey of learning, adapting, and executing. ${currentTone.action} 
+
+Whether you are just starting or optimizing an existing framework, staying committed to these core principles will unlock massive value.`;
+
+  return blogMarkdown;
 };
 
 const generateValidation = [
@@ -186,7 +240,7 @@ router.post('/generate', optionalAuth, generateValidation, async (req, res) => {
 
     // Generate text and optional cover image in parallel
     const [content, coverImage] = await Promise.all([
-      callHuggingFace(prompt, selectedModel),
+      callHuggingFace(prompt, { topic, tone, wordCount, seoKeywords, outline, language }, selectedModel),
       generateImage ? generateCoverImage(topic) : Promise.resolve(null),
     ]);
 
