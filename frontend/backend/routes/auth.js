@@ -1,9 +1,10 @@
 // routes/auth.js
-// User registration, login, profile, and credit refill routes
+// User registration, login, profile, and credit refill routes with Hybrid DB fallback
 
 const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 const { body, validationResult } = require('express-validator');
 const User = require('../models/User');
 const { protect } = require('../middleware/auth');
@@ -18,36 +19,81 @@ const generateToken = (userId) => {
   });
 };
 
+// Helper methods for hybrid DB execution
+const findUserByEmail = async (email) => {
+  if (!global.isInMemoryDB) {
+    try {
+      const dbUser = await User.findOne({ email }).select('+password');
+      if (dbUser) return dbUser;
+    } catch (e) {
+      console.warn('MongoDB query warning, using memory fallback:', e.message);
+      global.isInMemoryDB = true;
+    }
+  }
+  return global.memoryUsers.get(email) || null;
+};
+
+const createUserRecord = async ({ name, email, password }) => {
+  if (!global.isInMemoryDB) {
+    try {
+      const dbUser = await User.create({
+        name: name.trim(),
+        email,
+        password,
+        credits: 5,
+        tier: 'free',
+      });
+      return dbUser;
+    } catch (e) {
+      console.warn('MongoDB create warning, using memory fallback:', e.message);
+      global.isInMemoryDB = true;
+    }
+  }
+
+  const id = 'user_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+  const salt = await bcrypt.genSalt(10);
+  const hashedPassword = await bcrypt.hash(password, salt);
+
+  const memUser = {
+    _id: id,
+    id,
+    name: name.trim(),
+    email,
+    password: hashedPassword,
+    credits: 5,
+    tier: 'free',
+    blogsGenerated: 0,
+    comparePassword: async function (enteredPassword) {
+      return bcrypt.compare(enteredPassword, this.password);
+    },
+  };
+
+  global.memoryUsers.set(email, memUser);
+  return memUser;
+};
+
 /**
  * POST /api/auth/register
- * Create a new user account
  */
 router.post(
   '/register',
   [
-    body('name')
-      .trim()
-      .notEmpty().withMessage('Name is required')
-      .isLength({ max: 50 }).withMessage('Name cannot exceed 50 characters'),
-    body('email')
-      .trim()
-      .isEmail().withMessage('Please enter a valid email address'),
-    body('password')
-      .isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
+    body('name').trim().notEmpty().withMessage('Name is required'),
+    body('email').trim().isEmail().withMessage('Please enter a valid email address'),
+    body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
   ],
   async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       const msg = errors.array().map((e) => e.msg).join('. ');
-      return res.status(400).json({ success: false, error: msg, errors: errors.array() });
+      return res.status(400).json({ success: false, error: msg });
     }
 
     const { name, email, password } = req.body;
     const cleanEmail = email.toLowerCase().trim();
 
     try {
-      // Check if email already exists
-      const existingUser = await User.findOne({ email: cleanEmail });
+      const existingUser = await findUserByEmail(cleanEmail);
       if (existingUser) {
         return res.status(400).json({
           success: false,
@@ -55,27 +101,19 @@ router.post(
         });
       }
 
-      // Create user (with 5 initial credits)
-      const user = await User.create({
-        name: name.trim(),
-        email: cleanEmail,
-        password,
-        credits: 5,
-        tier: 'free',
-      });
-
-      const token = generateToken(user._id);
+      const user = await createUserRecord({ name, email: cleanEmail, password });
+      const token = generateToken(user._id || user.id);
 
       res.status(201).json({
         success: true,
         token,
         user: {
-          id: user._id,
+          id: user._id || user.id,
           name: user.name,
           email: user.email,
           blogsGenerated: user.blogsGenerated || 0,
-          credits: user.credits,
-          tier: user.tier,
+          credits: user.credits ?? 5,
+          tier: user.tier || 'free',
         },
         message: 'Account created successfully! You got 5 free credits.',
       });
@@ -92,7 +130,6 @@ router.post(
 
 /**
  * POST /api/auth/login
- * Authenticate user and return JWT
  */
 router.post(
   '/login',
@@ -104,14 +141,14 @@ router.post(
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       const msg = errors.array().map((e) => e.msg).join('. ');
-      return res.status(400).json({ success: false, error: msg, errors: errors.array() });
+      return res.status(400).json({ success: false, error: msg });
     }
 
     const { email, password } = req.body;
     const cleanEmail = email.toLowerCase().trim();
 
     try {
-      const user = await User.findOne({ email: cleanEmail }).select('+password');
+      const user = await findUserByEmail(cleanEmail);
 
       if (!user) {
         return res.status(401).json({
@@ -120,7 +157,12 @@ router.post(
         });
       }
 
-      const isPasswordValid = await user.comparePassword(password);
+      let isPasswordValid = false;
+      if (typeof user.comparePassword === 'function') {
+        isPasswordValid = await user.comparePassword(password);
+      } else if (user.password) {
+        isPasswordValid = await bcrypt.compare(password, user.password);
+      }
 
       if (!isPasswordValid) {
         return res.status(401).json({
@@ -129,18 +171,18 @@ router.post(
         });
       }
 
-      const token = generateToken(user._id);
+      const token = generateToken(user._id || user.id);
 
       res.json({
         success: true,
         token,
         user: {
-          id: user._id,
+          id: user._id || user.id,
           name: user.name,
           email: user.email,
           blogsGenerated: user.blogsGenerated || 0,
-          credits: user.credits,
-          tier: user.tier,
+          credits: user.credits ?? 5,
+          tier: user.tier || 'free',
         },
       });
 
@@ -156,11 +198,13 @@ router.post(
 
 /**
  * GET /api/auth/me
- * Get current logged-in user's profile
  */
 router.get('/me', protect, async (req, res) => {
   try {
-    const user = await User.findById(req.user._id);
+    let user = req.user;
+    if (!user && req.userId) {
+      user = Array.from(global.memoryUsers.values()).find((u) => u.id === req.userId || u._id === req.userId);
+    }
 
     if (!user) {
       return res.status(404).json({ success: false, error: 'User not found.' });
@@ -169,13 +213,13 @@ router.get('/me', protect, async (req, res) => {
     res.json({
       success: true,
       user: {
-        id: user._id,
+        id: user._id || user.id,
         name: user.name,
         email: user.email,
         blogsGenerated: user.blogsGenerated || 0,
-        credits: user.credits,
-        tier: user.tier,
-        createdAt: user.createdAt,
+        credits: user.credits ?? 5,
+        tier: user.tier || 'free',
+        createdAt: user.createdAt || new Date().toISOString(),
       },
     });
   } catch (error) {
@@ -185,31 +229,40 @@ router.get('/me', protect, async (req, res) => {
 
 /**
  * POST /api/auth/add-credits
- * Simulate credit top-up or tier upgrade
  */
 router.post('/add-credits', protect, async (req, res) => {
   const { amount = 25, planTier = 'pro' } = req.body;
 
   try {
-    const user = await User.findByIdAndUpdate(
-      req.user._id,
-      {
-        $inc: { credits: amount, totalCreditsPurchased: amount },
-        $set: { tier: planTier },
-      },
-      { new: true }
-    );
+    let user = req.user;
+
+    if (!global.isInMemoryDB && user && user._id) {
+      user = await User.findByIdAndUpdate(
+        user._id,
+        {
+          $inc: { credits: amount, totalCreditsPurchased: amount },
+          $set: { tier: planTier },
+        },
+        { new: true }
+      );
+    } else if (user) {
+      user.credits = (user.credits || 0) + amount;
+      user.tier = planTier;
+      if (user.email && global.memoryUsers.has(user.email)) {
+        global.memoryUsers.set(user.email, user);
+      }
+    }
 
     res.json({
       success: true,
       message: `Successfully added ${amount} credits! Plan upgraded to ${planTier.toUpperCase()}.`,
       user: {
-        id: user._id,
+        id: user._id || user.id,
         name: user.name,
         email: user.email,
-        blogsGenerated: user.blogsGenerated,
-        credits: user.credits,
-        tier: user.tier,
+        blogsGenerated: user.blogsGenerated || 0,
+        credits: user.credits ?? 30,
+        tier: user.tier || planTier,
       },
     });
 

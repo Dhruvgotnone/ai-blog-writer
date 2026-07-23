@@ -98,6 +98,7 @@ const BlogSchema = new mongoose.Schema(
   {
     // Auto-add createdAt and updatedAt timestamps
     timestamps: true,
+    bufferCommands: false,
   }
 );
 

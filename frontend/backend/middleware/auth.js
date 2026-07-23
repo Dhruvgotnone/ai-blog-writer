@@ -1,10 +1,22 @@
 // middleware/auth.js
-// JWT authentication middleware with fallback secret handling
+// JWT authentication middleware with hybrid store lookup
 
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
 const getJwtSecret = () => process.env.JWT_SECRET || 'inkwell_ai_default_jwt_secret_key_2026';
+
+const findUserById = async (id) => {
+  if (!global.isInMemoryDB) {
+    try {
+      const user = await User.findById(id).select('-password');
+      if (user) return user;
+    } catch (e) {
+      global.isInMemoryDB = true;
+    }
+  }
+  return Array.from(global.memoryUsers.values()).find((u) => u.id === id || u._id === id) || null;
+};
 
 /**
  * Protect routes - verify JWT token
@@ -28,7 +40,7 @@ const protect = async (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, getJwtSecret());
-    req.user = await User.findById(decoded.id).select('-password');
+    req.user = await findUserById(decoded.id);
 
     if (!req.user) {
       return res.status(401).json({
@@ -62,7 +74,7 @@ const optionalAuth = async (req, res, next) => {
   if (token) {
     try {
       const decoded = jwt.verify(token, getJwtSecret());
-      req.user = await User.findById(decoded.id).select('-password');
+      req.user = await findUserById(decoded.id);
     } catch (error) {
       req.user = null;
     }
