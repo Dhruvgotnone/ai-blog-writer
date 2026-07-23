@@ -7,12 +7,11 @@ const User = require('../models/User');
 const { optionalAuth, protect } = require('../middleware/auth');
 
 // Helper to call Hugging Face text models with serverless timeout safety
-const callHuggingFace = async (prompt, options = {}, selectedModel = null) => {
+const callHuggingFace = async (prompt, selectedModel = null) => {
   const HF_API_KEY = process.env.HF_API_KEY;
 
   if (!HF_API_KEY || HF_API_KEY.includes('REPLACE') || HF_API_KEY.includes('your_')) {
-    console.log('HF_API_KEY not configured or using template, generating custom blog response');
-    return buildCustomBlog(options);
+    throw new Error('Hugging Face API key is not configured on the server. Please add HF_API_KEY in Vercel environment variables.');
   }
 
   const defaultModels = [
@@ -24,13 +23,15 @@ const callHuggingFace = async (prompt, options = {}, selectedModel = null) => {
 
   const MODELS = selectedModel ? [selectedModel, ...defaultModels.filter(m => m !== selectedModel)] : defaultModels;
 
+  let lastErrorReason = 'Hugging Face API timeout or unavailable';
+
   // 1. Try Hugging Face Chat Completions Router API
   for (const model of MODELS) {
     try {
       console.log(`Trying HF Chat Completions API: ${model}`);
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      const timeoutId = setTimeout(() => controller.abort(), 7000);
 
       const response = await fetch('https://router.huggingface.co/hf-inference/v1/chat/completions', {
         method: 'POST',
@@ -58,6 +59,15 @@ const callHuggingFace = async (prompt, options = {}, selectedModel = null) => {
 
       clearTimeout(timeoutId);
 
+      if (response.status === 401) {
+        throw new Error('Invalid Hugging Face API Key. Please verify HF_API_KEY in Vercel Environment Variables.');
+      }
+
+      if (response.status === 503) {
+        lastErrorReason = `Model ${model} is currently loading on Hugging Face.`;
+        continue;
+      }
+
       if (response.ok) {
         const data = await response.json();
         const content = data.choices?.[0]?.message?.content;
@@ -65,9 +75,14 @@ const callHuggingFace = async (prompt, options = {}, selectedModel = null) => {
           console.log(`✅ Success with HF Chat API: ${model}`);
           return content.trim();
         }
+      } else {
+        const errText = await response.text();
+        lastErrorReason = `Status ${response.status}: ${errText}`;
       }
     } catch (err) {
+      if (err.message.includes('Invalid Hugging Face API Key')) throw err;
       console.log(`HF Chat API ${model} failed/timed out:`, err.message);
+      lastErrorReason = err.message;
     }
   }
 
@@ -77,7 +92,7 @@ const callHuggingFace = async (prompt, options = {}, selectedModel = null) => {
       console.log(`Trying Legacy HF Model API: ${model}`);
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
 
       const response = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
         method: 'POST',
@@ -99,6 +114,10 @@ const callHuggingFace = async (prompt, options = {}, selectedModel = null) => {
 
       clearTimeout(timeoutId);
 
+      if (response.status === 401) {
+        throw new Error('Invalid Hugging Face API Key. Please verify HF_API_KEY in Vercel Environment Variables.');
+      }
+
       if (response.ok) {
         const data = await response.json();
         let text = Array.isArray(data) ? data[0]?.generated_text : data?.generated_text;
@@ -108,12 +127,13 @@ const callHuggingFace = async (prompt, options = {}, selectedModel = null) => {
         }
       }
     } catch (err) {
+      if (err.message.includes('Invalid Hugging Face API Key')) throw err;
       console.log(`Legacy HF Model API ${model} failed:`, err.message);
     }
   }
 
-  console.log('All HF endpoints timed out or failed, using dynamic custom blog synthesizer');
-  return buildCustomBlog(options);
+  // NO TEMPLATES - Throw explicit error if AI generation failed
+  throw new Error(`AI Blog Generation failed (${lastErrorReason}). Please try selecting another model or verify your HF_API_KEY.`);
 };
 
 // Helper for AI Cover Image generation
@@ -126,98 +146,6 @@ const generateCoverImage = async (topic) => {
     console.error('Cover image generation error:', err.message);
     return null;
   }
-};
-
-const buildCustomBlog = ({ topic, tone = 'professional', wordCount = 500, seoKeywords = [], outline = [], language = 'English' }) => {
-  const cleanTopic = topic ? topic.trim() : 'Modern Strategy & Innovation';
-  
-  const toneHooks = {
-    professional: {
-      intro: `In today's fast-evolving global landscape, **${cleanTopic}** has emerged as a critical domain of strategic growth and operational excellence. Organizations and practitioners must adapt swiftly to leverage its full potential.`,
-      style: `Analyzing ${cleanTopic} requires a disciplined approach, balancing risk mitigation with long-term value creation.`,
-      action: `Establish robust frameworks, measure performance metrics, and refine execution continuously.`,
-    },
-    casual: {
-      intro: `If you've been hearing a lot about **${cleanTopic}** lately, you're not alone! Whether you're a complete beginner or looking to sharpen your skills, this guide breaks down everything you need to know in plain English.`,
-      style: `The best part about ${cleanTopic} is that getting started is much easier than it seems once you know the core fundamentals.`,
-      action: `Take simple, practical steps every day and don't be afraid to experiment as you learn.`,
-    },
-    academic: {
-      intro: `The study of **${cleanTopic}** presents a critical domain of research with profound implications across operational paradigms. Empirical observations highlight its transformative influence on contemporary methodologies.`,
-      style: `Comprehensive examination reveals that ${cleanTopic} operates at the intersection of technological advancement and analytical reasoning.`,
-      action: `Further empirical inquiry and systematic review are recommended to evaluate long-term systemic impacts.`,
-    },
-    creative: {
-      intro: `Imagine a landscape transformed by the power of **${cleanTopic}**. Beyond the surface lies an inspiring world of creative possibilities waiting to be unlocked.`,
-      style: `Exploring ${cleanTopic} is an art as much as a science—it invites us to think outside traditional boundaries and re-imagine what is possible.`,
-      action: `Embrace experimentation, foster curiosity, and let your unique vision guide your approach to ${cleanTopic}.`,
-    },
-    persuasive: {
-      intro: `Why is **${cleanTopic}** the game-changer everyone is talking about? Because mastering it gives you a distinct, undeniable advantage over the competition.`,
-      style: `Ignoring ${cleanTopic} is no longer an option. The individuals and organizations that act now will lead the future, while those who wait risk falling behind.`,
-      action: `Don't wait for tomorrow—start leveraging ${cleanTopic} right now and secure your competitive edge!`,
-    },
-  };
-
-  const currentTone = toneHooks[tone] || toneHooks.professional;
-
-  // Build section outline dynamically
-  let sectionsMarkdown = '';
-  if (outline && outline.length > 0) {
-    sectionsMarkdown = outline.map((item, i) => `## ${i + 1}. ${item}
-
-Deep-diving into **${item}** is essential when mastering **${cleanTopic}**. 
-
-Key considerations for this section:
-- **Strategic Impact:** Focus on high-leverage activities that drive real outcomes.
-- **Execution Blueprint:** Standardize workflows to ensure consistent results.
-- **Continuous Improvement:** Regularly evaluate progress and optimize your methods.`).join('\n\n');
-  } else {
-    sectionsMarkdown = `## 1. Understanding the Core Principles of ${cleanTopic}
-
-To excel in **${cleanTopic}**, it is essential to first understand the core principles that drive success. ${currentTone.style}
-
-Key fundamentals include:
-- **Core Strategy:** Aligning goals with actionable benchmarks.
-- **Efficiency & Scalability:** Building systems that grow seamlessly without bottlenecking.
-- **Data-Driven Insights:** Leveraging measurable feedback to make informed decisions.
-
-## 2. Key Benefits & Advantages
-
-Adopting a modern approach to **${cleanTopic}** yields significant advantages:
-
-- **Enhanced Performance:** Streamlines complex workflows and reduces friction.
-- **Sustainable Growth:** Builds a resilient foundation for long-term progress.
-- **Competitive Edge:** Positions you ahead of industry trends and changing demands.
-
-## 3. Actionable Best Practices
-
-Implementing **${cleanTopic}** effectively requires a structured roadmap:
-
-1. **Define Clear Objectives:** Outline your primary target outcomes before execution.
-2. **Execute Incrementally:** Focus on high-impact priority tasks first.
-3. **Monitor & Iterate:** Assess performance regularly and adapt based on real results.`;
-  }
-
-  // Build SEO keywords section if provided
-  let seoBlock = '';
-  if (seoKeywords && seoKeywords.length > 0) {
-    seoBlock = `\n\n> 🎯 **Key Focus Concepts:** ${seoKeywords.map(k => `\`${k}\``).join(', ')}`;
-  }
-
-  const blogMarkdown = `# ${cleanTopic}: The Complete Guide
-
-${currentTone.intro}${seoBlock}
-
-${sectionsMarkdown}
-
-## Conclusion
-
-Mastering **${cleanTopic}** is a continuous journey of learning, adapting, and executing. ${currentTone.action} 
-
-Whether you are just starting or optimizing an existing framework, staying committed to these core principles will unlock massive value.`;
-
-  return blogMarkdown;
 };
 
 const generateValidation = [
