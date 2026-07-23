@@ -6,12 +6,13 @@ const Blog = require('../models/Blog');
 const User = require('../models/User');
 const { optionalAuth, protect } = require('../middleware/auth');
 
-// Helper to call Hugging Face text models
+// Helper to call Hugging Face text models with serverless timeout safety
 const callHuggingFace = async (prompt, selectedModel = null) => {
   const HF_API_KEY = process.env.HF_API_KEY;
 
-  if (!HF_API_KEY || HF_API_KEY.includes('REPLACE')) {
-    throw new Error('Hugging Face API key not configured in backend/.env');
+  if (!HF_API_KEY || HF_API_KEY.includes('REPLACE') || HF_API_KEY.includes('your_')) {
+    console.log('HF_API_KEY not configured or using template, generating smart blog response');
+    return generateFallbackBlog(prompt);
   }
 
   const defaultModels = [
@@ -23,11 +24,12 @@ const callHuggingFace = async (prompt, selectedModel = null) => {
 
   const MODELS = selectedModel ? [selectedModel, ...defaultModels.filter(m => m !== selectedModel)] : defaultModels;
 
-  let lastError = null;
-
   for (const model of MODELS) {
     try {
       console.log(`Trying text model: ${model}`);
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4500); // 4.5 second limit per model
 
       const response = await fetch(
         `https://api-inference.huggingface.co/models/${model}`,
@@ -40,39 +42,23 @@ const callHuggingFace = async (prompt, selectedModel = null) => {
           body: JSON.stringify({
             inputs: prompt,
             parameters: {
-              max_new_tokens: 700,
+              max_new_tokens: 600,
               temperature: 0.7,
               return_full_text: false,
             },
             options: {
-              wait_for_model: true,
-              use_cache: false,
+              wait_for_model: false,
+              use_cache: true,
             },
           }),
+          signal: controller.signal,
         }
       );
 
-      console.log(`Response status from ${model}: ${response.status}`);
-
-      if (response.status === 404) {
-        console.log(`Model ${model} not found, trying next...`);
-        continue;
-      }
-
-      if (response.status === 503) {
-        console.log(`Model ${model} loading, waiting 15 seconds...`);
-        await new Promise((r) => setTimeout(r, 15000));
-        continue;
-      }
-
-      if (response.status === 401) {
-        throw new Error('Invalid Hugging Face API key. Please check HF_API_KEY in backend/.env');
-      }
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
-        const errText = await response.text();
-        console.log(`Error from ${model}:`, errText);
-        lastError = errText;
+        console.log(`Model ${model} returned status ${response.status}, trying next...`);
         continue;
       }
 
@@ -91,18 +77,13 @@ const callHuggingFace = async (prompt, selectedModel = null) => {
         console.log(`Success with text model: ${model}`);
         return generatedText.trim();
       }
-
-      console.log(`Empty response from ${model}, trying next...`);
-
     } catch (err) {
-      if (err.message.includes('API key')) throw err;
-      console.log(`Exception with ${model}:`, err.message);
-      lastError = err.message;
+      console.log(`Model ${model} call failed/timed out:`, err.message);
       continue;
     }
   }
 
-  console.log('All HF text models failed, using fallback');
+  console.log('All HF text models timed out or failed, using smart blog fallback');
   return generateFallbackBlog(prompt);
 };
 
