@@ -86,15 +86,15 @@ const callHuggingFace = async (prompt, selectedModel = null) => {
     }
   }
 
-  // 2. Fallback to Legacy HF Models API
+  // 2. Fallback to Active HF Router Models API
   for (const model of MODELS) {
     try {
-      console.log(`Trying Legacy HF Model API: ${model}`);
+      console.log(`Trying Active HF Router Model API: ${model}`);
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 6000);
 
-      const response = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
+      const response = await fetch(`https://router.huggingface.co/models/${model}`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${HF_API_KEY}`,
