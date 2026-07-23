@@ -75,7 +75,7 @@ router.post(
       console.error('❌ Register error:', error);
       res.status(500).json({
         success: false,
-        error: 'Registration failed. Please try again.',
+        error: error.message || 'Registration failed. Please try again.',
       });
     }
   }
