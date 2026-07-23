@@ -3,25 +3,36 @@
 
 const mongoose = require('mongoose');
 
-let isConnected = 0;
+// Disable buffering so failed DB connections fail fast instead of hanging 10s
+mongoose.set('bufferCommands', false);
+
+let isConnected = false;
 
 const connectDB = async () => {
-  if (isConnected || mongoose.connection.readyState >= 1) {
+  if (isConnected && mongoose.connection.readyState === 1) {
     return;
   }
 
-  const uri = process.env.MONGODB_URI || 'mongodb://localhost:27017/ai-blog-writer';
+  const uri = process.env.MONGODB_URI;
+
+  if (!uri || uri.includes('localhost')) {
+    if (process.env.VERCEL) {
+      throw new Error('MONGODB_URI environment variable is missing or points to localhost in Vercel settings.');
+    }
+  }
+
+  const connectionUri = uri || 'mongodb://localhost:27017/ai-blog-writer';
 
   try {
-    const conn = await mongoose.connect(uri, {
+    const conn = await mongoose.connect(connectionUri, {
       serverSelectionTimeoutMS: 5000,
     });
 
-    isConnected = conn.connections[0].readyState;
+    isConnected = true;
     console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
   } catch (error) {
-    console.error('⚠️ MongoDB connection failed:', error.message);
-    // Do not call process.exit in serverless environment
+    console.error('❌ MongoDB connection failed:', error.message);
+    throw new Error(`Database connection timeout (${error.message}). Please verify MongoDB Atlas Network Access is set to Allow Access from Anywhere (0.0.0.0/0).`);
   }
 };
 
