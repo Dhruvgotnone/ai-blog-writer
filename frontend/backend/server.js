@@ -8,9 +8,6 @@ const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const connectDB = require('./config/db');
 
-// Connect to Database
-connectDB();
-
 // Initialize Express
 const app = express();
 
@@ -20,21 +17,31 @@ app.use(
     origin: '*',
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization'],
-    credentials: fontTrue(),
+    credentials: true,
   })
 );
-
-function fontTrue() { return true; }
-
-// Ensure DB is connected before every API request in serverless environment
-app.use(async (req, res, next) => {
-  await connectDB();
-  next();
-});
 
 // Parse JSON request bodies
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Ensure DB is connected before every API request with error handling
+app.use(async (req, res, next) => {
+  // Allow health endpoint without DB connection
+  if (req.path === '/health' || req.path === '/api/health') {
+    return next();
+  }
+  try {
+    await connectDB();
+    next();
+  } catch (err) {
+    console.error('DB Middleware Error:', err.message);
+    return res.status(500).json({
+      success: false,
+      error: err.message || 'Database connection error.',
+    });
+  }
+});
 
 // Rate limiting
 const apiLimiter = rateLimit({
